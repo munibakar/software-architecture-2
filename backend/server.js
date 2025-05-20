@@ -8,6 +8,10 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+// Additional imports for document generation
+const pdfkit = require('pdfkit');
+const docx = require('docx');
+const { Document, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, BorderStyle } = docx;
 
 // FFmpeg yapılandırması - alternatif yaklaşım
 const ffmpegPath = path.join(__dirname, "ffmpeg.exe");
@@ -383,6 +387,260 @@ app.post('/api/ai-chat', async (req, res) => {
     });
   }
 });
+
+// Routes for getting available meeting analysis files
+app.get('/api/meeting-files', (req, res) => {
+  try {
+    const meetingAnalysesDir = path.join(__dirname, '../meeting_analyses');
+    
+    if (!fs.existsSync(meetingAnalysesDir)) {
+      fs.mkdirSync(meetingAnalysesDir, { recursive: true });
+      return res.status(200).json({ files: [] });
+    }
+    
+    const files = fs.readdirSync(meetingAnalysesDir)
+      .filter(file => file.endsWith('.json'))
+      .filter(file => file.startsWith('meeting_analysis_'));
+    
+    res.status(200).json({ files });
+  } catch (error) {
+    console.error('Error listing meeting files:', error);
+    res.status(500).json({ error: 'Error listing meeting files: ' + error.message });
+  }
+});
+
+// Routes for downloading reports
+app.get('/api/download/pdf', async (req, res) => {
+  try {
+    const { file } = req.query;
+    
+    if (!file) {
+      return res.status(400).json({ error: 'File parameter is required' });
+    }
+    
+    const resultsFilePath = path.join(__dirname, '../meeting_analyses', file);
+    
+    if (!fs.existsSync(resultsFilePath)) {
+      return res.status(404).json({ error: 'Analysis results file not found' });
+    }
+    
+    // Read the analysis data
+    const analysisData = JSON.parse(fs.readFileSync(resultsFilePath, 'utf8'));
+    
+    // Create PDF document
+    const doc = new pdfkit({ margin: 50 });
+    
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${file.replace('.json', '.pdf')}`);
+    
+    // Pipe the PDF to the response
+    doc.pipe(res);
+    
+    // Add content to PDF
+    doc.fontSize(20).font('Helvetica-Bold').text('Meeting Analysis Report', { align: 'center' });
+    doc.moveDown();
+    
+    // Add date
+    doc.fontSize(12).font('Helvetica').text(`Generated on: ${new Date().toLocaleDateString()}`, { align: 'right' });
+    doc.moveDown(2);
+    
+    // Add summary
+    doc.fontSize(16).font('Helvetica-Bold').text('Meeting Summary');
+    doc.moveDown();
+    doc.fontSize(12).font('Helvetica').text(analysisData.summary);
+    doc.moveDown(2);
+    
+    // Add sentiment
+    doc.fontSize(16).font('Helvetica-Bold').text('Meeting Atmosphere');
+    doc.moveDown();
+    doc.fontSize(12).font('Helvetica').text(`Overall sentiment: ${analysisData.sentiment.overall}`);
+    doc.fontSize(12).font('Helvetica').text(`Description: ${analysisData.sentiment.description}`);
+    doc.moveDown(2);
+    
+    // Add participation statistics
+    doc.fontSize(16).font('Helvetica-Bold').text('Participation Statistics');
+    doc.moveDown();
+    
+    Object.entries(analysisData.speaker_stats).forEach(([speaker, stats]) => {
+      doc.fontSize(12).font('Helvetica-Bold').text(speaker);
+      doc.fontSize(12).font('Helvetica').text(`Speaking time: ${stats.speaking_time} seconds`);
+      doc.fontSize(12).font('Helvetica').text(`Segments: ${stats.segments}`);
+      doc.fontSize(12).font('Helvetica').text(`Words: ${stats.words}`);
+      doc.moveDown();
+    });
+    
+    doc.moveDown();
+    
+    // Add speaker dialogues
+    doc.fontSize(16).font('Helvetica-Bold').text('Speaker Dialogues');
+    doc.moveDown();
+    
+    Object.entries(analysisData.speaker_dialogues).forEach(([speaker, dialogues]) => {
+      doc.fontSize(14).font('Helvetica-Bold').text(speaker);
+      doc.moveDown();
+      
+      dialogues.forEach((dialogue, index) => {
+        doc.fontSize(12).font('Helvetica').text(`[${formatTime(dialogue.start_time)} - ${formatTime(dialogue.end_time)}]`);
+        doc.fontSize(12).font('Helvetica').text(dialogue.text);
+        doc.moveDown();
+      });
+      
+      doc.moveDown();
+    });
+    
+    // Finalize the PDF
+    doc.end();
+    
+  } catch (error) {
+    console.error('PDF generation error:', error);
+    res.status(500).json({ error: 'Error generating PDF: ' + error.message });
+  }
+});
+
+app.get('/api/download/word', async (req, res) => {
+  try {
+    const { file } = req.query;
+    
+    if (!file) {
+      return res.status(400).json({ error: 'File parameter is required' });
+    }
+    
+    const resultsFilePath = path.join(__dirname, '../meeting_analyses', file);
+    
+    if (!fs.existsSync(resultsFilePath)) {
+      return res.status(404).json({ error: 'Analysis results file not found' });
+    }
+    
+    // Read the analysis data
+    const analysisData = JSON.parse(fs.readFileSync(resultsFilePath, 'utf8'));
+    
+    // Create Word document
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          new Paragraph({
+            text: "Meeting Analysis Report",
+            heading: HeadingLevel.TITLE,
+            alignment: docx.AlignmentType.CENTER
+          }),
+          
+          new Paragraph({
+            text: `Generated on: ${new Date().toLocaleDateString()}`,
+            alignment: docx.AlignmentType.RIGHT
+          }),
+          
+          new Paragraph({
+            text: "Meeting Summary",
+            heading: HeadingLevel.HEADING_1
+          }),
+          
+          new Paragraph({
+            text: analysisData.summary
+          }),
+          
+          new Paragraph({
+            text: "Meeting Atmosphere",
+            heading: HeadingLevel.HEADING_1
+          }),
+          
+          new Paragraph({
+            text: `Overall sentiment: ${analysisData.sentiment.overall}`
+          }),
+          
+          new Paragraph({
+            text: `Description: ${analysisData.sentiment.description}`
+          }),
+          
+          new Paragraph({
+            text: "Participation Statistics",
+            heading: HeadingLevel.HEADING_1
+          })
+        ]
+      }]
+    });
+    
+    // Add participation statistics
+    const speakerStatsChildren = [];
+    
+    Object.entries(analysisData.speaker_stats).forEach(([speaker, stats]) => {
+      speakerStatsChildren.push(
+        new Paragraph({
+          text: speaker,
+          heading: HeadingLevel.HEADING_2
+        }),
+        new Paragraph({
+          text: `Speaking time: ${stats.speaking_time} seconds`
+        }),
+        new Paragraph({
+          text: `Segments: ${stats.segments}`
+        }),
+        new Paragraph({
+          text: `Words: ${stats.words}`
+        })
+      );
+    });
+    
+    doc.addSection({
+      children: speakerStatsChildren
+    });
+    
+    // Add speaker dialogues
+    const dialogueChildren = [
+      new Paragraph({
+        text: "Speaker Dialogues",
+        heading: HeadingLevel.HEADING_1
+      })
+    ];
+    
+    Object.entries(analysisData.speaker_dialogues).forEach(([speaker, dialogues]) => {
+      dialogueChildren.push(
+        new Paragraph({
+          text: speaker,
+          heading: HeadingLevel.HEADING_2
+        })
+      );
+      
+      dialogues.forEach((dialogue, index) => {
+        dialogueChildren.push(
+          new Paragraph({
+            text: `[${formatTime(dialogue.start_time)} - ${formatTime(dialogue.end_time)}]`,
+            style: "timestampStyle"
+          }),
+          new Paragraph({
+            text: dialogue.text
+          })
+        );
+      });
+    });
+    
+    doc.addSection({
+      children: dialogueChildren
+    });
+    
+    // Create a buffer with the document
+    const buffer = await docx.Packer.toBuffer(doc);
+    
+    // Set response headers
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename=${file.replace('.json', '.docx')}`);
+    
+    // Send the buffer
+    res.send(buffer);
+    
+  } catch (error) {
+    console.error('Word generation error:', error);
+    res.status(500).json({ error: 'Error generating Word document: ' + error.message });
+  }
+});
+
+// Helper function for time formatting in reports
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
 
 // Yardımcı fonksiyonlar
 function extractAudioFromVideo(videoPath, audioPath) {

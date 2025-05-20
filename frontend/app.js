@@ -8,6 +8,7 @@ let currentAudioPath = null;
 let currentJobId = null;
 let socket = null;
 let participationChart = null;
+let currentAnalysisData = null; // Added to store current analysis data
 
 // DOM yüklendikten sonra çalış
 document.addEventListener('DOMContentLoaded', () => {
@@ -17,6 +18,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Form submission olayını dinle
     const uploadForm = document.getElementById('uploadForm');
     uploadForm.addEventListener('submit', handleFormSubmit);
+
+    // Download buttons
+    const downloadPDFBtn = document.getElementById('downloadPDF');
+    const downloadWordBtn = document.getElementById('downloadWord');
+    
+    if (downloadPDFBtn) {
+        downloadPDFBtn.addEventListener('click', handlePDFDownload);
+    }
+    
+    if (downloadWordBtn) {
+        downloadWordBtn.addEventListener('click', handleWordDownload);
+    }
 
     // Sayfa yüklendiğinde veya kapatıldığında bağlantıyı kapat
     window.addEventListener('beforeunload', () => {
@@ -452,58 +465,66 @@ function processFullTranscription(text) {
 
 // Analiz gösterme
 function displayAnalysis(analysis) {
-    // Get chat history if available
-    let chatContext = '';
-    if (window.chatComponent) {
-        const chatHistory = window.chatComponent.getChatHistory();
-    }
-
-    // Toplantı konusu
-    if (analysis.topic) {
-        document.getElementById('meetingTopic').textContent = analysis.topic;
+    // Store the analysis data globally
+    currentAnalysisData = analysis;
+    
+    // Show sentiment info
+    const meetingSentiment = document.getElementById('meetingSentiment');
+    if (meetingSentiment) {
+        const sentiment = analysis.sentiment;
+        let sentimentIcon = 'bi-emoji-neutral';
+        let sentimentColor = 'text-secondary';
         
-        // Ek metin dosyası kullanıldıysa bilgi göster
+        if (sentiment.overall === 'positive') {
+            sentimentIcon = 'bi-emoji-smile';
+            sentimentColor = 'text-success';
+        } else if (sentiment.overall === 'negative') {
+            sentimentIcon = 'bi-emoji-frown';
+            sentimentColor = 'text-danger';
+        } else if (sentiment.overall === 'mixed') {
+            sentimentIcon = 'bi-emoji-expressionless';
+            sentimentColor = 'text-warning';
+        }
+        
+        meetingSentiment.className = sentimentColor;
+        meetingSentiment.innerHTML = `
+            <i class="bi ${sentimentIcon}"></i> ${sentiment.description}
+        `;
+    }
+    
+    // Show topic
+    const meetingTopic = document.getElementById('meetingTopic');
+    if (meetingTopic) {
+        meetingTopic.textContent = analysis.topic || analysis.summary;
+    }
+    
+    // Show participation chart
+    if (analysis.participation) {
+        createParticipationChart(analysis.participation);
+    }
+    
+    // Show additional text info if available
+    const additionalTextInfo = document.getElementById('additionalTextInfo');
+    if (additionalTextInfo) {
         if (analysis.used_additional_text) {
-            // Badge ekle
-            const additionalTextBadge = document.createElement('span');
-            additionalTextBadge.className = 'badge bg-info text-white mt-2 me-2';
-            additionalTextBadge.innerHTML = '<i class="bi bi-file-text"></i> Ek metin kullanıldı';
-            document.getElementById('meetingTopic').after(additionalTextBadge);
-            
-            // Detaylı bilgi alanını göster
-            const additionalTextInfo = document.getElementById('additionalTextInfo');
             additionalTextInfo.classList.remove('d-none');
-            
-            // Eğer özel mesaj varsa onu göster
-            if (analysis.additional_text_info && analysis.additional_text_info.message) {
-                additionalTextInfo.querySelector('.alert').textContent = analysis.additional_text_info.message;
-            }
-            
-            // İşlem log'una da bilgi ekle
-            addStatusMessage('info', 'Özet, yüklenen metin dosyasındaki bilgiler kullanılarak zenginleştirildi');
+        } else {
+            additionalTextInfo.classList.add('d-none');
         }
     }
     
-    // Duygu analizi
-    if (analysis.sentiment && analysis.sentiment.overall) {
-        const sentimentEl = document.getElementById('meetingSentiment');
-        let sentimentClass = 'text-secondary';
-        let sentimentIcon = '<i class="bi bi-emoji-neutral"></i>';
-        
-        if (analysis.sentiment.overall === 'positive') {
-            sentimentClass = 'text-success';
-            sentimentIcon = '<i class="bi bi-emoji-smile"></i>';
-        } else if (analysis.sentiment.overall === 'negative') {
-            sentimentClass = 'text-danger';
-            sentimentIcon = '<i class="bi bi-emoji-frown"></i>';
-        }
-        
-        sentimentEl.className = sentimentClass;
-        sentimentEl.innerHTML = `${sentimentIcon} ${analysis.sentiment.description}`;
+    // Show results section
+    const resultsSection = document.getElementById('resultsSection');
+    if (resultsSection) {
+        resultsSection.classList.remove('d-none');
     }
     
-    // Katılım grafiği
-    createParticipationChart(analysis.participation);
+    // Enable download buttons
+    const downloadPDFBtn = document.getElementById('downloadPDF');
+    const downloadWordBtn = document.getElementById('downloadWord');
+    
+    if (downloadPDFBtn) downloadPDFBtn.disabled = false;
+    if (downloadWordBtn) downloadWordBtn.disabled = false;
 }
 
 // Katılım grafiği oluşturma
@@ -579,4 +600,102 @@ function formatTime(seconds) {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Function to handle PDF download
+function handlePDFDownload() {
+    if (!currentAnalysisData) {
+        addStatusMessage('warning', 'Henüz analiz verisi mevcut değil.');
+        return;
+    }
+    
+    // İlk olarak mevcut analiz sonuçlarını alıyoruz
+    fetch(`${API_BASE_URL}/api/meeting-files`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Analiz dosyaları alınamadı');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.files && data.files.length > 0) {
+                // En son eklenen dosyayı kullan (veya currentJobId'ye göre filtreleme yapılabilir)
+                const fileName = data.files[data.files.length - 1];
+                
+                // PDF'i indir
+                return fetch(`${API_BASE_URL}/api/download/pdf?file=${fileName}`);
+            } else {
+                throw new Error('Hiç analiz dosyası bulunamadı');
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('PDF oluşturulamadı');
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `meeting_analysis_${new Date().toISOString().slice(0,10)}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            addStatusMessage('success', 'PDF dosyası başarıyla indirildi');
+        })
+        .catch(error => {
+            console.error('PDF indirme hatası:', error);
+            addStatusMessage('error', 'PDF indirme hatası: ' + error.message);
+        });
+}
+
+// Function to handle Word download
+function handleWordDownload() {
+    if (!currentAnalysisData) {
+        addStatusMessage('warning', 'Henüz analiz verisi mevcut değil.');
+        return;
+    }
+    
+    // İlk olarak mevcut analiz sonuçlarını alıyoruz
+    fetch(`${API_BASE_URL}/api/meeting-files`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Analiz dosyaları alınamadı');
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.files && data.files.length > 0) {
+                // En son eklenen dosyayı kullan (veya currentJobId'ye göre filtreleme yapılabilir)
+                const fileName = data.files[data.files.length - 1];
+                
+                // Word'ü indir
+                return fetch(`${API_BASE_URL}/api/download/word?file=${fileName}`);
+            } else {
+                throw new Error('Hiç analiz dosyası bulunamadı');
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Word belgesi oluşturulamadı');
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = `meeting_analysis_${new Date().toISOString().slice(0,10)}.docx`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            addStatusMessage('success', 'Word belgesi başarıyla indirildi');
+        })
+        .catch(error => {
+            console.error('Word indirme hatası:', error);
+            addStatusMessage('error', 'Word indirme hatası: ' + error.message);
+        });
 } 

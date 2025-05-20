@@ -30,6 +30,50 @@ body {
     margin-right: 8px;
 }
 
+/* Download buttons styles */
+.download-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+}
+
+.download-btn {
+    transition: all 0.3s ease;
+    min-width: 180px;
+    padding: 10px 20px;
+    font-weight: 500;
+}
+
+.download-btn i {
+    margin-right: 8px;
+    font-size: 1.1rem;
+}
+
+.download-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+#downloadPDF:hover {
+    background-color: #0b5ed7;
+}
+
+#downloadWord:hover {
+    background-color: #157347;
+}
+
+@media (max-width: 768px) {
+    .download-buttons {
+        flex-direction: column;
+    }
+    
+    .download-btn {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+}
+
 #transcriptionContent {
     max-height: 500px;
     overflow-y: auto;
